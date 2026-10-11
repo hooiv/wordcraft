@@ -441,26 +441,26 @@ mod tests {
     #[test]
     fn layout_changes_through_the_command() {
         let mut s = crate::Session::new(wordcraft_doc::Document::new());
-        let mut run = |v: Value| s.run("tools.customizeRibbon", &v);
-        let r = run(json!({"newTab": {"name": "Mine", "after": "Home"}, "hide": "Draw"})).unwrap();
+        let r = s.run("tools.customizeRibbon", &json!({"newTab": {"name": "Mine", "after": "Home"}, "hide": "Draw"})).unwrap();
         assert_eq!(r["tab"], "Mine");
-        run(json!({"add": {"tab": "Mine", "group": "New Group", "command": "format.bold"}})).unwrap();
-        run(json!({"newGroup": {"tab": "Insert", "name": "Extras"}})).unwrap();
-        run(json!({"add": {"tab": "Insert", "group": "Extras", "command": "edit.copy"}})).unwrap();
-        run(json!({"rename": {"tab": "Mine", "to": "Writing"}})).unwrap();
-        let r = run(json!({"move": {"tab": "Writing", "by": -5}, "qatAdd": "format.bold", "qatRemove": "file.save"})).unwrap();
+        s.run("tools.customizeRibbon", &json!({"add": {"tab": "Mine", "group": "New Group", "command": "format.bold"}})).unwrap();
+        s.run("tools.customizeRibbon", &json!({"newGroup": {"tab": "Insert", "name": "Extras"}})).unwrap();
+        s.run("tools.customizeRibbon", &json!({"add": {"tab": "Insert", "group": "Extras", "command": "edit.copy"}})).unwrap();
+        s.run("tools.customizeRibbon", &json!({"rename": {"tab": "Mine", "to": "Writing"}})).unwrap();
+        let r = s
+            .run("tools.customizeRibbon", &json!({"move": {"tab": "Writing", "by": -5}, "qatAdd": "format.bold", "qatRemove": "file.save"}))
+            .unwrap();
         let tabs = r["tabs"].as_array().unwrap();
         assert_eq!(tabs[0]["name"], "Writing");
         assert_eq!(tabs[0]["groups"][0]["commands"], json!(["format.bold"]));
         assert!(tabs.iter().any(|t| t["name"] == "Draw" && t["hidden"] == true));
         assert_eq!(r["qat"], json!(["edit.undo", "edit.redo", "format.bold"]));
         // Built-in tabs keep their names and can only be hidden; reserved and unknown names fail.
-        assert!(run(json!({"rename": {"tab": "Home", "to": "Start"}})).is_err());
-        assert!(run(json!({"remove": {"tab": "Home"}})).is_err());
-        assert!(run(json!({"rename": {"tab": "Writing", "to": "insert"}})).is_err());
-        assert!(run(json!({"add": {"tab": "Writing", "group": "New Group", "command": "no.such"}})).is_err());
-        assert!(run(json!({"move": {"tab": "Nope", "by": 1}})).is_err());
-        drop(run);
+        assert!(s.run("tools.customizeRibbon", &json!({"rename": {"tab": "Home", "to": "Start"}})).is_err());
+        assert!(s.run("tools.customizeRibbon", &json!({"remove": {"tab": "Home"}})).is_err());
+        assert!(s.run("tools.customizeRibbon", &json!({"rename": {"tab": "Writing", "to": "insert"}})).is_err());
+        assert!(s.run("tools.customizeRibbon", &json!({"add": {"tab": "Writing", "group": "New Group", "command": "no.such"}})).is_err());
+        assert!(s.run("tools.customizeRibbon", &json!({"move": {"tab": "Nope", "by": 1}})).is_err());
         assert!(s.ui_requests.is_empty(), "programmatic calls never open dialogs");
         s.run("tools.customizeRibbon", &json!({"reset": true})).unwrap();
         assert_eq!(s.ribbon, RibbonLayout::default());

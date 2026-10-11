@@ -657,6 +657,37 @@ fn cache_reuses_unchanged_paragraphs() {
 }
 
 #[test]
+fn layout_cache_stays_bounded_after_many_width_variants() {
+    let d = Document::from_text(&"Keep this paragraph cached.\n".repeat(80));
+    let mut cache = LayoutCache::new();
+    layout(&d, &mut cache, &LayoutOptions::default());
+    let first_misses = cache.misses;
+    // Each web width creates a different paragraph layout key. Keep the number of variants above
+    // the ordinary cache-pruning threshold without relying on wall-clock performance assertions.
+    for width in 144..=2400 {
+        layout(&d, &mut cache, &LayoutOptions { view: ViewMode::Web, web_width: width as f32, ..Default::default() });
+    }
+    assert!(cache.len() <= MAX_PARAGRAPH_LAYOUTS);
+    assert!(cache.misses > first_misses);
+    // Repeating the current layout should still hit its live entries after an eviction pass.
+    let hits = cache.hits;
+    layout(&d, &mut cache, &LayoutOptions { view: ViewMode::Web, web_width: 2400.0, ..Default::default() });
+    assert!(cache.hits > hits);
+}
+
+#[test]
+fn clearing_layout_cache_clears_accounting_state() {
+    let d = Document::from_text("Cache this.");
+    let mut cache = LayoutCache::new();
+    layout(&d, &mut cache, &LayoutOptions::default());
+    assert!(!cache.is_empty());
+    cache.clear();
+    assert!(cache.is_empty());
+    assert!(cache.used.is_empty());
+    assert!(cache.outline_order.is_empty());
+}
+
+#[test]
 fn selection_rects_cover_range() {
     let d = Document::from_text("Hello world\nSecond line");
     let l = lay(&d);
