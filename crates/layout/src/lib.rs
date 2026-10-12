@@ -28,14 +28,6 @@ use wordcraft_doc::section::{SectionProps, SectionStart};
 use wordcraft_doc::{Block, Blocks, Document, Paragraph, Path, StoryRef};
 use wordcraft_geom::{Point, Rect, Spin};
 
-/// A paragraph layout is small compared with its source document, but very long documents can
-/// have many width/field/exclusion variants for the same paragraph. Keep a hard ceiling so edits
-/// in a long editing session do not cause cache memory to grow without bound.
-const MAX_PARAGRAPH_LAYOUTS: usize = 32_768;
-/// Opaque-pixel contours are more expensive per entry than a paragraph-layout key. Bound these
-/// separately; a FIFO eviction avoids the all-or-nothing cache miss burst from clearing all 256.
-const MAX_PICTURE_OUTLINES: usize = 256;
-
 pub use fields::FieldCtx;
 pub use hit::VisualStep;
 pub use para::{LineEnd, ParaLayout};
@@ -310,7 +302,6 @@ pub struct LayoutCache {
     outlines: HashMap<(String, usize, usize, [u32; 4]), Option<Arc<Vec<(f32, f32)>>>>,
     env: u64,
     used: HashSet<Key>,
-    outline_order: Vec<(String, usize, usize, [u32; 4])>,
     pub hits: u64,
     pub misses: u64,
 }
@@ -328,8 +319,6 @@ impl LayoutCache {
     pub fn clear(&mut self) {
         self.paras.clear();
         self.outlines.clear();
-        self.outline_order.clear();
-        self.used.clear();
     }
 }
 
@@ -387,16 +376,10 @@ impl Ctx<'_> {
             if let Some(o) = cache.outlines.get(&key) {
                 return o.clone();
             }
-            let outline = contour::picture_outline(bytes, crop).map(Arc::new);
-            if cache.outlines.len() >= MAX_PICTURE_OUTLINES {
-                if !cache.outline_order.is_empty() {
-                    let oldest = cache.outline_order.remove(0);
-                    cache.outlines.remove(&oldest);
-                } else {
-                    cache.outlines.clear();
-                }
+            if cache.outlines.len() >= 256 {
+                cache.outlines.clear();
             }
-            cache.outline_order.push(key.clone());
+            let outline = contour::picture_outline(bytes, crop).map(Arc::new);
             cache.outlines.insert(key, outline.clone());
             outline
         })
@@ -1410,35 +1393,11 @@ pub fn layout(doc: &Document, cache: &mut LayoutCache, opts: &LayoutOptions) -> 
     if !web {
         headers_footers(&mut ctx, &mut pages, &sections);
     }
-    // Retain entries used by the current layout when the cache is disproportionately large,
-    // then enforce a hard cap for pathological documents with many distinct layout variants.
+    // Evict paragraph layouts that weren't used this pass if the cache grew large.
     if ctx.cache.paras.len() > 4 * ctx.cache.used.len().max(1024) {
         let used = std::mem::take(&mut ctx.cache.used);
         ctx.cache.paras.retain(|k, _| used.contains(k));
         ctx.cache.used = used;
-    }
-    if ctx.cache.paras.len() > MAX_PARAGRAPH_LAYOUTS {
-        let used = &ctx.cache.used;
-        ctx.cache.paras.retain(|k, _| used.contains(k));
-        if ctx.cache.paras.len() > MAX_PARAGRAPH_LAYOUTS {
-            // Keep deterministic keys from the active pass first; discard any excess in stable
-            // hash-map-independent order by collecting keys and sorting their semantic fields.
-            let mut keys: Vec<_> = ctx.cache.paras.keys().cloned().collect();
-            keys.sort_by(|a, b| {
-                a.rev
-                    .cmp(&b.rev)
-                    .then_with(|| a.width.cmp(&b.width))
-                    .then_with(|| a.table.cmp(&b.table))
-                    .then_with(|| a.notes.cmp(&b.notes))
-                    .then_with(|| a.excl.cmp(&b.excl))
-                    .then_with(|| a.eq.cmp(&b.eq))
-                    .then_with(|| a.label.cmp(&b.label))
-                    .then_with(|| a.page.cmp(&b.page))
-            });
-            for key in keys.into_iter().take(ctx.cache.paras.len().saturating_sub(MAX_PARAGRAPH_LAYOUTS)) {
-                ctx.cache.paras.remove(&key);
-            }
-        }
     }
     let mut index: HashMap<(StoryRef, Path), Vec<(usize, usize)>> = HashMap::new();
     for (pi, p) in pages.iter().enumerate() {
